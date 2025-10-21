@@ -51,8 +51,29 @@ python generate_video_topics.py example_videos.csv
 - Đọc file Excel/CSV chứa danh sách video
 - Gọi API generate-topic cho mỗi video
 - Xử lý **5 video đồng thời** để tăng tốc độ
+- **Lưu response của mỗi video vào file JSON riêng** trong thư mục `responses/`
 - Logging chi tiết quá trình xử lý
 - Báo cáo tổng kết khi hoàn thành
+
+## Lưu trữ Responses
+
+Mỗi response từ API sẽ được lưu vào file JSON riêng trong thư mục `responses/` với tên file dựa trên tên video.
+
+### Ví dụ:
+- Video: `video1.mp4` → File: `responses/video1.json`
+- Video: `my video 2.mp4` → File: `responses/my_video_2.json`
+
+### Cấu trúc file JSON:
+
+```json
+{
+  "video_name": "video1.mp4",
+  "status": "success",
+  "data": {
+    // Response data from API
+  }
+}
+```
 
 ## Cấu hình
 
@@ -61,6 +82,7 @@ Bạn có thể thay đổi các thông số trong file `generate_video_topics.p
 - `API_URL`: URL của API
 - `BEARER_TOKEN`: Token xác thực
 - `MAX_WORKERS`: Số lượng video xử lý đồng thời (mặc định: 5)
+- `OUTPUT_DIR`: Thư mục lưu responses (mặc định: `responses`)
 
 ## Output mẫu
 
@@ -83,5 +105,20 @@ Total videos: 10
 Successful: 10
 Failed: 0
 Errors: 0
+Responses saved to: ./responses/
 ==================================================
+```
+
+## Cấu trúc thư mục sau khi chạy
+
+```
+.
+├── generate_video_topics.py
+├── requirements.txt
+├── videos.xlsx
+└── responses/
+    ├── video1.json
+    ├── video2.json
+    ├── video3.json
+    └── ...
 ```

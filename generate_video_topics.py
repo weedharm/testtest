@@ -9,7 +9,11 @@ import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import sys
 import logging
+import json
+import os
+import re
 from typing import Dict, Any
+from pathlib import Path
 
 # Configure logging
 logging.basicConfig(
@@ -22,6 +26,58 @@ logger = logging.getLogger(__name__)
 API_URL = "http://35.77.64.63:8080/ai/v1/generate-topic"
 BEARER_TOKEN = "yJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJuYW1lIjoiZ2Fra2VuIiwiaWF0IjoxNTE2MjM5MDIyfQ.uPUicPZRL5Bya61fD0j_ZclC-VsAyueB4aKWWR6mrIs"
 MAX_WORKERS = 5  # Number of concurrent requests
+OUTPUT_DIR = "responses"  # Directory to save response files
+
+def sanitize_filename(filename: str) -> str:
+    """
+    Convert video name to safe filename
+
+    Args:
+        filename: Original video name
+
+    Returns:
+        Safe filename for saving
+    """
+    # Remove file extension if present
+    name_without_ext = os.path.splitext(filename)[0]
+    # Replace invalid characters with underscore
+    safe_name = re.sub(r'[^\w\-_\. ]', '_', name_without_ext)
+    # Replace spaces with underscore
+    safe_name = safe_name.replace(' ', '_')
+    return safe_name
+
+def save_response_to_file(video_name: str, response_data: Dict[str, Any], status: str):
+    """
+    Save API response to JSON file
+
+    Args:
+        video_name: Name of the video
+        response_data: Response data from API or error info
+        status: Status of the request (success/failed/error)
+    """
+    try:
+        # Create output directory if it doesn't exist
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+        # Create safe filename
+        safe_name = sanitize_filename(video_name)
+        output_file = os.path.join(OUTPUT_DIR, f"{safe_name}.json")
+
+        # Prepare data to save
+        data_to_save = {
+            "video_name": video_name,
+            "status": status,
+            "data": response_data
+        }
+
+        # Save to file
+        with open(output_file, 'w', encoding='utf-8') as f:
+            json.dump(data_to_save, f, indent=2, ensure_ascii=False)
+
+        logger.debug(f"Saved response to: {output_file}")
+
+    except Exception as e:
+        logger.error(f"Failed to save response for {video_name}: {str(e)}")
 
 def generate_topic_for_video(row_data: Dict[str, Any], index: int) -> Dict[str, Any]:
     """
@@ -63,16 +119,29 @@ def generate_topic_for_video(row_data: Dict[str, Any], index: int) -> Dict[str, 
 
         # Check response
         if response.status_code == 200:
+            response_data = response.json()
             logger.info(f"[Row {index + 1}] SUCCESS: {video_name}")
+
+            # Save response to file
+            save_response_to_file(video_name, response_data, "success")
+
             return {
                 "index": index,
                 "video_name": video_name,
                 "status": "success",
-                "response": response.json()
+                "response": response_data
             }
         else:
+            error_data = {
+                "status_code": response.status_code,
+                "error_message": response.text
+            }
             logger.error(f"[Row {index + 1}] FAILED: {video_name} - Status: {response.status_code}")
             logger.error(f"Response: {response.text}")
+
+            # Save error response to file
+            save_response_to_file(video_name, error_data, "failed")
+
             return {
                 "index": index,
                 "video_name": video_name,
@@ -81,10 +150,19 @@ def generate_topic_for_video(row_data: Dict[str, Any], index: int) -> Dict[str, 
             }
 
     except Exception as e:
+        error_data = {
+            "error_type": type(e).__name__,
+            "error_message": str(e)
+        }
         logger.error(f"[Row {index + 1}] ERROR: {str(e)}")
+
+        # Save error to file
+        video_name = row_data.get('Video Name', 'Unknown')
+        save_response_to_file(video_name, error_data, "error")
+
         return {
             "index": index,
-            "video_name": row_data.get('Video Name', 'Unknown'),
+            "video_name": video_name,
             "status": "error",
             "error": str(e)
         }
@@ -142,6 +220,7 @@ def process_excel_file(excel_file_path: str):
         logger.info(f"Successful: {results['success']}")
         logger.info(f"Failed: {results['failed']}")
         logger.info(f"Errors: {results['error']}")
+        logger.info(f"Responses saved to: ./{OUTPUT_DIR}/")
         logger.info("="*50)
 
     except FileNotFoundError:
