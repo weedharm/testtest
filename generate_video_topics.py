@@ -12,8 +12,9 @@ import logging
 import json
 import os
 import re
-from typing import Dict, Any
+from typing import Dict, Any, List
 from pathlib import Path
+from datetime import datetime
 
 # Configure logging
 logging.basicConfig(
@@ -26,6 +27,7 @@ logger = logging.getLogger(__name__)
 API_URL = "http://35.77.64.63:8080/ai/v1/generate-topic"
 BEARER_TOKEN = "yJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJuYW1lIjoiZ2Fra2VuIiwiaWF0IjoxNTE2MjM5MDIyfQ.uPUicPZRL5Bya61fD0j_ZclC-VsAyueB4aKWWR6mrIs"
 MAX_WORKERS = 5  # Number of concurrent requests
+REQUEST_TIMEOUT = 300  # Request timeout in seconds (5 minutes)
 OUTPUT_DIR = "responses"  # Directory to save response files
 
 def sanitize_filename(filename: str) -> str:
@@ -67,6 +69,7 @@ def save_response_to_file(video_name: str, response_data: Dict[str, Any], status
         data_to_save = {
             "video_name": video_name,
             "status": status,
+            "timestamp": datetime.now().isoformat(),
             "data": response_data
         }
 
@@ -90,6 +93,7 @@ def generate_topic_for_video(row_data: Dict[str, Any], index: int) -> Dict[str, 
     Returns:
         Dictionary with result status
     """
+    start_time = datetime.now()
     try:
         # Extract data from row
         # Adjust column names based on your Excel structure
@@ -114,13 +118,16 @@ def generate_topic_for_video(row_data: Dict[str, Any], index: int) -> Dict[str, 
             API_URL,
             json=payload,
             headers=headers,
-            timeout=60
+            timeout=REQUEST_TIMEOUT
         )
 
         # Check response
         if response.status_code == 200:
+            end_time = datetime.now()
+            duration = (end_time - start_time).total_seconds()
+
             response_data = response.json()
-            logger.info(f"[Row {index + 1}] SUCCESS: {video_name}")
+            logger.info(f"[Row {index + 1}] SUCCESS: {video_name} (took {duration:.2f}s)")
 
             # Save response to file
             save_response_to_file(video_name, response_data, "success")
@@ -129,9 +136,15 @@ def generate_topic_for_video(row_data: Dict[str, Any], index: int) -> Dict[str, 
                 "index": index,
                 "video_name": video_name,
                 "status": "success",
+                "start_time": start_time.isoformat(),
+                "end_time": end_time.isoformat(),
+                "duration_seconds": duration,
                 "response": response_data
             }
         else:
+            end_time = datetime.now()
+            duration = (end_time - start_time).total_seconds()
+
             error_data = {
                 "status_code": response.status_code,
                 "error_message": response.text
@@ -146,10 +159,16 @@ def generate_topic_for_video(row_data: Dict[str, Any], index: int) -> Dict[str, 
                 "index": index,
                 "video_name": video_name,
                 "status": "failed",
+                "start_time": start_time.isoformat(),
+                "end_time": end_time.isoformat(),
+                "duration_seconds": duration,
                 "error": f"Status {response.status_code}: {response.text}"
             }
 
     except Exception as e:
+        end_time = datetime.now()
+        duration = (end_time - start_time).total_seconds()
+
         error_data = {
             "error_type": type(e).__name__,
             "error_message": str(e)
@@ -164,8 +183,81 @@ def generate_topic_for_video(row_data: Dict[str, Any], index: int) -> Dict[str, 
             "index": index,
             "video_name": video_name,
             "status": "error",
+            "start_time": start_time.isoformat(),
+            "end_time": end_time.isoformat(),
+            "duration_seconds": duration,
             "error": str(e)
         }
+
+def save_summary_file(all_results: List[Dict[str, Any]], excel_file_path: str):
+    """
+    Save summary statistics to a JSON file
+
+    Args:
+        all_results: List of all video processing results
+        excel_file_path: Original Excel file path
+    """
+    try:
+        # Calculate statistics
+        total = len(all_results)
+        success = sum(1 for r in all_results if r["status"] == "success")
+        failed = sum(1 for r in all_results if r["status"] == "failed")
+        error = sum(1 for r in all_results if r["status"] == "error")
+
+        # Calculate total processing time
+        total_duration = sum(r.get("duration_seconds", 0) for r in all_results)
+        avg_duration = total_duration / total if total > 0 else 0
+
+        # Find slowest and fastest
+        sorted_results = sorted(all_results, key=lambda x: x.get("duration_seconds", 0), reverse=True)
+        slowest = sorted_results[0] if sorted_results else None
+        fastest = sorted_results[-1] if sorted_results else None
+
+        # Prepare summary data
+        summary = {
+            "generated_at": datetime.now().isoformat(),
+            "source_file": excel_file_path,
+            "statistics": {
+                "total_videos": total,
+                "successful": success,
+                "failed": failed,
+                "errors": error,
+                "success_rate": f"{(success / total * 100):.2f}%" if total > 0 else "0%"
+            },
+            "performance": {
+                "total_duration_seconds": round(total_duration, 2),
+                "average_duration_seconds": round(avg_duration, 2),
+                "slowest_video": {
+                    "name": slowest["video_name"],
+                    "duration_seconds": round(slowest.get("duration_seconds", 0), 2)
+                } if slowest else None,
+                "fastest_video": {
+                    "name": fastest["video_name"],
+                    "duration_seconds": round(fastest.get("duration_seconds", 0), 2)
+                } if fastest else None
+            },
+            "videos": [
+                {
+                    "video_name": r["video_name"],
+                    "status": r["status"],
+                    "start_time": r.get("start_time"),
+                    "end_time": r.get("end_time"),
+                    "duration_seconds": round(r.get("duration_seconds", 0), 2),
+                    "error": r.get("error") if r["status"] != "success" else None
+                }
+                for r in all_results
+            ]
+        }
+
+        # Save to file
+        summary_file = os.path.join(OUTPUT_DIR, "summary.json")
+        with open(summary_file, 'w', encoding='utf-8') as f:
+            json.dump(summary, f, indent=2, ensure_ascii=False)
+
+        logger.info(f"Summary saved to: {summary_file}")
+
+    except Exception as e:
+        logger.error(f"Failed to save summary file: {str(e)}")
 
 def process_excel_file(excel_file_path: str):
     """
@@ -197,6 +289,7 @@ def process_excel_file(excel_file_path: str):
             "failed": 0,
             "error": 0
         }
+        all_results = []  # Store all results for summary
 
         logger.info(f"Starting processing with {MAX_WORKERS} concurrent workers...")
 
@@ -211,6 +304,10 @@ def process_excel_file(excel_file_path: str):
             for future in as_completed(future_to_video):
                 result = future.result()
                 results[result["status"]] += 1
+                all_results.append(result)
+
+        # Save summary file
+        save_summary_file(all_results, excel_file_path)
 
         # Print summary
         logger.info("\n" + "="*50)
@@ -221,6 +318,7 @@ def process_excel_file(excel_file_path: str):
         logger.info(f"Failed: {results['failed']}")
         logger.info(f"Errors: {results['error']}")
         logger.info(f"Responses saved to: ./{OUTPUT_DIR}/")
+        logger.info(f"Summary saved to: ./{OUTPUT_DIR}/summary.json")
         logger.info("="*50)
 
     except FileNotFoundError:
