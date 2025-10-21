@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 API_URL = "http://35.77.64.63:8080/ai/v1/generate-topic"
 BEARER_TOKEN = "yJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJuYW1lIjoiZ2Fra2VuIiwiaWF0IjoxNTE2MjM5MDIyfQ.uPUicPZRL5Bya61fD0j_ZclC-VsAyueB4aKWWR6mrIs"
 MAX_WORKERS = 5  # Number of concurrent requests
+REQUEST_TIMEOUT = 300  # Request timeout in seconds (5 minutes)
 OUTPUT_DIR = "responses"  # Directory to save response files
 
 def sanitize_filename(filename: str) -> str:
@@ -114,7 +115,7 @@ def generate_topic_for_video(row_data: Dict[str, Any], index: int) -> Dict[str, 
             API_URL,
             json=payload,
             headers=headers,
-            timeout=60
+            timeout=REQUEST_TIMEOUT
         )
 
         # Check response

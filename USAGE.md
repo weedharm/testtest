@@ -82,7 +82,12 @@ Bạn có thể thay đổi các thông số trong file `generate_video_topics.p
 - `API_URL`: URL của API
 - `BEARER_TOKEN`: Token xác thực
 - `MAX_WORKERS`: Số lượng video xử lý đồng thời (mặc định: 5)
+- `REQUEST_TIMEOUT`: Thời gian timeout cho mỗi request (mặc định: 300 giây = 5 phút)
 - `OUTPUT_DIR`: Thư mục lưu responses (mặc định: `responses`)
+
+### Lưu ý về Timeout:
+- Nếu video xử lý lâu, bạn có thể tăng `REQUEST_TIMEOUT` lên cao hơn (ví dụ: 600 = 10 phút)
+- Timeout mặc định đã tăng từ 60 giây lên 300 giây để tránh lỗi ReadTimeout
 
 ## Output mẫu
 
