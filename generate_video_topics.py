@@ -1,0 +1,168 @@
+#!/usr/bin/env python3
+"""
+Script to generate video topics from Excel file
+Processes 5 videos concurrently
+"""
+
+import pandas as pd
+import requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import sys
+import logging
+from typing import Dict, Any
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# API Configuration
+API_URL = "http://35.77.64.63:8080/ai/v1/generate-topic"
+BEARER_TOKEN = "yJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJuYW1lIjoiZ2Fra2VuIiwiaWF0IjoxNTE2MjM5MDIyfQ.uPUicPZRL5Bya61fD0j_ZclC-VsAyueB4aKWWR6mrIs"
+MAX_WORKERS = 5  # Number of concurrent requests
+
+def generate_topic_for_video(row_data: Dict[str, Any], index: int) -> Dict[str, Any]:
+    """
+    Generate topic for a single video
+
+    Args:
+        row_data: Dictionary containing video data from Excel row
+        index: Row index for logging
+
+    Returns:
+        Dictionary with result status
+    """
+    try:
+        # Extract data from row
+        # Adjust column names based on your Excel structure
+        video_name = row_data.get('Video Name', '')
+        id_video = row_data.get('ID Video', video_name)  # Use Video Name as fallback if no ID column
+
+        # Prepare request payload
+        payload = {
+            "id_video": str(id_video),
+            "object_key": str(video_name)
+        }
+
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {BEARER_TOKEN}"
+        }
+
+        logger.info(f"[Row {index + 1}] Processing: {video_name}")
+
+        # Make API request
+        response = requests.post(
+            API_URL,
+            json=payload,
+            headers=headers,
+            timeout=60
+        )
+
+        # Check response
+        if response.status_code == 200:
+            logger.info(f"[Row {index + 1}] SUCCESS: {video_name}")
+            return {
+                "index": index,
+                "video_name": video_name,
+                "status": "success",
+                "response": response.json()
+            }
+        else:
+            logger.error(f"[Row {index + 1}] FAILED: {video_name} - Status: {response.status_code}")
+            logger.error(f"Response: {response.text}")
+            return {
+                "index": index,
+                "video_name": video_name,
+                "status": "failed",
+                "error": f"Status {response.status_code}: {response.text}"
+            }
+
+    except Exception as e:
+        logger.error(f"[Row {index + 1}] ERROR: {str(e)}")
+        return {
+            "index": index,
+            "video_name": row_data.get('Video Name', 'Unknown'),
+            "status": "error",
+            "error": str(e)
+        }
+
+def process_excel_file(excel_file_path: str):
+    """
+    Read Excel file and process videos concurrently
+
+    Args:
+        excel_file_path: Path to Excel file
+    """
+    try:
+        # Read Excel file
+        logger.info(f"Reading Excel file: {excel_file_path}")
+        df = pd.read_excel(excel_file_path)
+
+        logger.info(f"Found {len(df)} videos to process")
+        logger.info(f"Columns in Excel: {list(df.columns)}")
+
+        # Check if required column exists
+        if 'Video Name' not in df.columns:
+            logger.error("Excel file must contain 'Video Name' column")
+            logger.info(f"Available columns: {list(df.columns)}")
+            return
+
+        # Convert DataFrame to list of dictionaries
+        videos = df.to_dict('records')
+
+        # Process videos concurrently
+        results = {
+            "success": 0,
+            "failed": 0,
+            "error": 0
+        }
+
+        logger.info(f"Starting processing with {MAX_WORKERS} concurrent workers...")
+
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            # Submit all tasks
+            future_to_video = {
+                executor.submit(generate_topic_for_video, video, i): i
+                for i, video in enumerate(videos)
+            }
+
+            # Process completed tasks
+            for future in as_completed(future_to_video):
+                result = future.result()
+                results[result["status"]] += 1
+
+        # Print summary
+        logger.info("\n" + "="*50)
+        logger.info("PROCESSING SUMMARY")
+        logger.info("="*50)
+        logger.info(f"Total videos: {len(videos)}")
+        logger.info(f"Successful: {results['success']}")
+        logger.info(f"Failed: {results['failed']}")
+        logger.info(f"Errors: {results['error']}")
+        logger.info("="*50)
+
+    except FileNotFoundError:
+        logger.error(f"Excel file not found: {excel_file_path}")
+    except Exception as e:
+        logger.error(f"Error processing Excel file: {str(e)}")
+        raise
+
+def main():
+    """Main entry point"""
+    if len(sys.argv) < 2:
+        print("Usage: python generate_video_topics.py <excel_file_path>")
+        print("\nExample:")
+        print("  python generate_video_topics.py videos.xlsx")
+        print("\nExcel file should contain:")
+        print("  - 'Video Name' column (required) - corresponds to object_key")
+        print("  - 'ID Video' column (optional) - if not present, Video Name will be used")
+        sys.exit(1)
+
+    excel_file = sys.argv[1]
+    process_excel_file(excel_file)
+
+if __name__ == "__main__":
+    main()
